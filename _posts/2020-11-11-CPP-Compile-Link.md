@@ -11,6 +11,19 @@ tags:
 
 <!--more-->
 
+调用一个函数时，先把自己的基地址入栈，防止从函数退出时找不到主调函数的基地址，这样的话一些偏移就不好计算了；
+
+接着还要把函数返回后要执行的下一条指令的地址要入栈；
+
+比如：ip 就会保存 printf 的地址，为了从 add 函数返回之后能执行 printf ！
+
+```c
+int main(){
+    add(); //主调函数
+    printf();
+}
+```
+
 ![image-20201117095102616](https://i.loli.net/2020/11/17/5U1XtSm7ib6oFu2.png)
 
 # 链接原理
@@ -173,3 +186,127 @@ No rule to make target '/usr/lib/x86_64-linux-gnu/libGL.so'
 
 Tips:可以使用`ldconfig -p`指令查看函数库内容（ld.so.cache）
 
+## CMakeLists.txt
+
+
+
+```cmake
+cmake_minimum_required(VERSION 3.5)# 规定最低版本
+
+project(CloudViewer) # 项目名称
+
+# init qt
+set(CMAKE_AUTOMOC ON) # for meta object compiler
+set(CMAKE_AUTORCC ON) # resource files
+set(CMAKE_AUTOUIC ON) # UI files
+
+# find package
+find_package(Qt5 REQUIRED Widgets)
+find_package(PCL 1.7.1 REQUIRED)
+
+include_directories(${PCL_INCLUDE_DIRS})# 将PCL_INCLUDE_DIRS（上面find 到了） 文件夹下的头文件加入到包含路径中，类似于加入到VC++--->包含目录
+link_directories(${PCL_LIBRARY_DIRS})# 同理，链接--》库目录
+add_definitions(${PCL_DEFINITIONS})
+
+# find source files, header files and ui files
+# aux_source_directory(. DIR_SRCS)
+file(GLOB_RECURSE DIR_SRCS    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)#GLOB_RECURSE 将会递归所有匹配文件夹的子文件夹和匹配的文件。将结果保存到变量里面去供下文使用
+file(GLOB_RECURSE DIR_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+file(GLOB_RECURSE DIR_UIS     ${CMAKE_CURRENT_SOURCE_DIR}/*.ui)
+
+# add resource
+set(RESOURCE ${CMAKE_CURRENT_SOURCE_DIR}/CloudViewer.qrc)
+qt5_add_resources(RESOURCE_ADDED ${RESOURCE})
+# 相当于 GCC -o ${PROJECT_NAME} ${DIR_SRCS}...
+add_executable(${PROJECT_NAME}
+    ${DIR_SRCS}
+    ${DIR_HEADERS}
+    ${DIR_UIS}
+    ${RESOURCE_ADDED}
+)
+# 相当于 GCC -o ${PROJECT_NAME} -l${PCL_LIBRARIES}
+target_link_libraries(${PROJECT_NAME}
+    ${PCL_LIBRARIES}
+    Qt5::Widgets
+)
+
+```
+
+### find_package原理
+
+首先明确一点，cmake本身不提供任何搜索库的便捷方法，所有搜索库并给变量赋值的操作必须由cmake代码完成，比如下面将要提到的FindXXX.cmake和XXXConfig.cmake。只不过，库的作者通常会提供这两个文件，以方便使用者调用。
+
+find_package采用两种模式搜索库：
+
+Module模式：搜索CMAKE_MODULE_PATH指定路径下的FindXXX.cmake文件，执行该文件从而找到XXX库。其中，具体查找库并给XXX_INCLUDE_DIRS和XXX_LIBRARIES两个变量赋值的操作由FindXXX.cmake模块完成。
+Config模式：搜索XXX_DIR指定路径下的XXXConfig.cmake文件，执行该文件从而找到XXX库。其中具体查找库并给XXX_INCLUDE_DIRS和XXX_LIBRARIES两个变量赋值的操作由XXXConfig.cmake模块完成。
+
+两种模式看起来似乎差不多，不过cmake默认采取Module模式，如果Module模式未找到库，才会采取Config模式。如果XXX_DIR路径下找不到XXXConfig.cmake文件，则会找/usr/local/lib/cmake/XXX/中的XXXConfig.cmake文件。总之，Config模式是一个备选策略。通常，库安装时会拷贝一份XXXConfig.cmake到系统目录中，因此在没有显式指定搜索路径时也可以顺利找到。
+
+在我遇到的问题中，由于Caffe安装时没有安装到系统目录，因此无法自动找到CaffeConfig.cmake，我在CMakeLists.txt最前面添加了一句话之后就可以了。
+
+ `set(Caffe_DIR /home/wjg/projects/caffe/build)   #添加CaffeConfig.cmake的搜索路径`
+
+### add_definitions
+
+代码中通过宏　USE_MACRO 作为区分．
+
+．．．
+
+＃ifdef USE_MACRO
+
+．．．
+
+＃endif
+
+我们可以通过在项目中的CMakeLists.txt 中添加如下代码控制代码的开启和关闭．
+
+```c
++ OPTION(USE_MACRO
+
++  "Build the project using macro"
+
++  OFF)
+
++ IF(USE_MACRO)
+
++  add_definitions("-DUSE_MACRO")
+
++ endif(USE_MACRO)
+```
+
+## 关于Windows下与Linux下文件编码格式的讨论
+
+跨平台的程序从GitHub 上下载下来导入到 visual studio 经常报莫名奇怪的错误，经查发现是文件编码的问题。接下来详细记录一下这个问题：
+
+首先，怎么查看Windows 下一个文件的编码格式呢？
+
+很简单，就是用记事本打开并点击另存为就可以看到文件是什么格式了
+
+![image-20200711210801609](https://i.loli.net/2020/07/11/Wy51jaBTCsgfItd.png)
+
+上图中源文件是UTF-8的格式。而我们打开一个正常不乱码的文件查看发现是ANSI格式。不同的国家和地区制定了不同的标准，由此产生了 GB2312、GBK、GB18030、Big5、Shift_JIS 等各自的编码标准。这些使用多个字节来代表一个字符的各种汉字延伸编码方式，称为 ANSI 编码。在简体中文Windows操作系统中，ANSI 编码代表 GB2312编码；在繁体中文Windows操作系统中，ANSI编码代表Big5；
+
+UTF-8 最大的一个特点，就是它是一种变长的编码方式。它可以使用1~4个字节表示一个符号，根据不同的符号而变化字节长度。
+
+UTF-8 的编码规则很简单，只有二条：
+
+1）对于单字节的符号，字节的第一位设为`0`，后面7位为这个符号的 Unicode 码。因此对于英语字母，UTF-8 编码和 ASCII 码是相同的。
+
+2）对于`n`字节的符号（`n > 1`），第一个字节的前`n`位都设为`1`，第`n + 1`位设为`0`，后面字节的前两位一律设为`10`。剩下的没有提及的二进制位，全部为这个符号的 Unicode 码。
+
+下表总结了编码规则，字母`x`表示可用编码的位。
+
+```c
+Unicode符号范围     |        UTF-8编码方式
+(十六进制)        |              （二进制）
+----------------------+---------------------------------------------
+0000 0000-0000 007F | 0xxxxxxx
+0000 0080-0000 07FF | 110xxxxx 10xxxxxx
+0000 0800-0000 FFFF | 1110xxxx 10xxxxxx 10xxxxxx
+0001 0000-0010 FFFF | 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+```
+
+跟据上表，解读 UTF-8 编码非常简单。如果一个字节的第一位是`0`，则这个字节单独就是一个字符；如果第一位是`1`，则连续有多少个`1`，就表示当前字符占用多少个字节。
+
+我们下载了VS 中的御用插件 ForceUTF-8 
