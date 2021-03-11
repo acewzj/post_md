@@ -78,6 +78,22 @@ categories:
 #define BigtoLittle32(A)  ((((uint32)(A) & 0xff000000) >> 24) |                                            						(((uint32)(A) & 0x00ff0000) >> 8) | \
                    (((uint32)(A) & 0x0000ff00) << 8) | \
                    (((uint32)(A) & 0x000000ff) << 24))
+                                
+                                
+#include <stdio.h>
+int main() {
+    int i = 0x11223344;
+    char *p;
+
+    p = (char *) &i;
+    if (*p == 0x44) {
+        printf("Little endian\n");
+    }
+    else {
+        printf("Big endian\n");
+    }
+    return 0;
+}                                
 ```
 
 ## IP地址怎么存入int里面
