@@ -52,16 +52,6 @@ categories:
 
 ![image-20200401100638777](https://i.loli.net/2020/04/01/L6Qp4ORXPeFi5UY.png)
 
-
-
-
-
-
-
-
-
-
-
 ## 如何判断机器的大端与小端？
 
 ### 常见的字节序
