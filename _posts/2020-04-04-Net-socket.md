@@ -121,6 +121,34 @@ return 0;
 
 文件描述符的监视范围与第一个参数有关，实际上，select函数通过第一个参数来传递监视对象文件描述符的数量。因此，需要得到注册在fd_set变量中的文件描述符数量。但是每次新建文件描述符时，其值都会加1，故只需要将最大的文件描述符值加1再传递到select函数即可。加1是因为文件描述符的值从0开始。
 
+select实现（2.6的内核，其他版本的内核，应该都相差不多）
+应用程序[调用](https://www.jb51.cc/tag/diaoyong/)select，进入内核[调用](https://www.jb51.cc/tag/diaoyong/)sys_select，做些简单初始化工作，接着进入 core_sys_select，
+此[函数](https://www.jb51.cc/tag/hanshu/)主要工作是把描述符集合从[用户](https://www.jb51.cc/tag/yonghu/)空间复制到内核空间， 最终进入do_select，完成其主要的[功能](https://www.jb51.cc/tag/gongneng/)。
+do_select里，[调用](https://www.jb51.cc/tag/diaoyong/) poll_initwait，主要工作是[注册](https://www.jb51.cc/tag/zhuce/)poll_wait的回调[函数](https://www.jb51.cc/tag/hanshu/)为__pollwait，
+当在设备驱动的poll回调[函数](https://www.jb51.cc/tag/hanshu/)里[调用](https://www.jb51.cc/tag/diaoyong/)poll_wait，其实就是[调用](https://www.jb51.cc/tag/diaoyong/)__pollwait，
+__pollwait的主要工作是把当前进程挂载到等待队列里，当等待的事件到来就会唤醒此进程。
+接着执行for循环，循环里首先遍历每个[文件](https://www.jb51.cc/tag/wenjian/)描述符，[调用](https://www.jb51.cc/tag/diaoyong/)对应描述符的poll回调[函数](https://www.jb51.cc/tag/hanshu/)，检测是否就绪，
+遍历完所有描述符之后，只要有描述符处于就绪状态,信号中断,出错或者超时，就[退出](https://www.jb51.cc/tag/tuichu/)循环，
+否则会[调用](https://www.jb51.cc/tag/diaoyong/)schedule_xxx[函数](https://www.jb51.cc/tag/hanshu/)，让当前进程睡眠，一直到超时或者有描述符就绪被唤醒。
+接着又会再次遍历每个描述符，[调用](https://www.jb51.cc/tag/diaoyong/)poll再次检测。
+如此循环，直到符合条件才会[退出](https://www.jb51.cc/tag/tuichu/)。
+
+我们从上面[代码](https://www.jb51.cc/tag/daima/)分析，可以总结出select/poll天生的缺陷：
+1）每次[调用](https://www.jb51.cc/tag/diaoyong/)select/poll都需要要把描述符集合从[用户](https://www.jb51.cc/tag/yonghu/)空间copy到内核空间，检测完成之后，又要把检测的结果集合从内核空间copy到[用户](https://www.jb51.cc/tag/yonghu/)空间
+当描述符很多，而且select经常被唤醒，这种开销会比较大
+2）如果说描述符集合来[回复](https://www.jb51.cc/tag/huifu/)制不算什么，那么多次的全部描述符遍历就比较恐怖了，
+我们在应用程序中，每次[调用](https://www.jb51.cc/tag/diaoyong/)select/poll 都必须首先遍历描述符，把他们加到fd_set集合里，这是应用层的第一次遍历，
+接着进入内核空间，至少进行一次遍历和[调用](https://www.jb51.cc/tag/diaoyong/)每个描述符的poll回调检测，一般可能是2次遍历，第一次没发现就绪描述符，
+加入等待队列，第二次是被唤醒，接着再遍历一遍。再回到应用层，我们还必须再次遍历所有描述符，用 FD_ISSET检测结果集。
+如果描述符很多，这种遍历就很消耗[cpu](https://www.jb51.cc/tag/cpu/)资源了。
+3）描述符多少限制，当然poll没有限制，select却有1024的硬性限制，除了[修改](https://www.jb51.cc/tag/xiugai/)内核[增加](https://www.jb51.cc/tag/zengjia/)1024限制外没别的办法。
+既然有这么些缺点 ，那不是 select/poll变得一无是处了，那就大错特错了。
+他们依然是[代码](https://www.jb51.cc/tag/daima/)移植的最好[函数](https://www.jb51.cc/tag/hanshu/)，因为几乎所有平台都有对它们的实现提供接口。
+在描述符不是太多，他们依然十分出色的完成多路复用IO，
+而且如果每个连接上的描述符都处于活跃状态，他们的效率其实跟epoll也差不了多少。
+曾经使用多个线程+每个线程采用poll的办法开发TCP服务器，处理[文件](https://www.jb51.cc/tag/wenjian/)收发，连接达到几千个，
+当时的瓶颈已经不在网络IO，而在磁盘IO了。
+
 ```c
 if((fd_num = select(fd_max+1,&cpy_reads,0,0,&timeout)) == -1)
     
@@ -169,45 +197,9 @@ socklen_t clntsocklen = sizeof(clntaddr);
 
 ## Epoll
 
-**创建epoll对象**
-
-如下图所示，当某个进程调用epoll_create方法时，内核会创建一个eventpoll对象（也就是程序中epfd所代表的对象）。eventpoll对象也是文件系统中的一员，和socket一样，它也会有等待队列。创建一个代表该epoll的eventpoll对象是必须的，因为内核要维护“就绪列表”等数据，“就绪列表”可以作为eventpoll的成员。
-
-![image-20201102201252909](https://i.loli.net/2020/11/02/5p8BZNdc3AeStbJ.png)
-
-![image-20201102200800299](https://i.loli.net/2020/11/02/EIMrH8jazZnSuCp.png)
-
-**维护监视列表**
-
-创建epoll对象后，可以用epoll_ctl添加或删除所要监听的socket。以添加socket为例，如下图，如果通过epoll_ctl添加sock1、sock2和sock3的监视，内核会将eventpoll添加到这三个socket的等待队列中。
-
-![image-20201102201327381](https://i.loli.net/2020/11/02/bBaNEwn3RgCYLtP.png)
-
-当socket收到数据后，中断程序会操作eventpoll对象，而不是直接操作进程。
-
-**接收数据**
-
-当socket收到数据后，中断程序会给eventpoll的“就绪列表”添加socket引用。如下图展示的是sock2和sock3收到数据后，中断程序让rdlist引用这两个socket。
-
-![image-20201102201359620](https://i.loli.net/2020/11/02/rF46AjcTGeXLwZS.png)
-
-eventpoll对象相当于是socket和进程之间的中介，socket的数据接收并不直接影响进程，而是通过改变eventpoll的就绪列表来改变进程状态。
-
-当程序执行到epoll_wait时，如果rdlist已经引用了socket，那么epoll_wait直接返回，如果rdlist为空，阻塞进程。
-
-**阻塞和唤醒进程**
-
-假设计算机中正在运行进程A和进程B，在某时刻进程A运行到了epoll_wait语句。如下图所示，内核会将进程A放入eventpoll的等待队列中，阻塞进程。
-
-![image-20201102201107158](https://i.loli.net/2020/11/02/XUSg75REOsb2wmZ.png)
-
-当socket接收到数据，中断程序一方面修改rdlist，另一方面唤醒eventpoll等待队列中的进程，进程A再次进入运行状态（如下图）。也因为rdlist的存在，进程A可以知道哪些socket发生了变化。
-
-![image-20201102201434741](https://i.loli.net/2020/11/02/Bbps2w4lVZknWoU.png)
+非常好https://blog.csdn.net/daaikuaichuan/article/details/83862311
 
 
-
-![image-20200328232049698](https://i.loli.net/2020/03/30/4FkcyDpC9ZxMiTu.png)
 
 ## epoll_create
 
