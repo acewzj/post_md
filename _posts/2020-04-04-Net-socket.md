@@ -215,7 +215,7 @@ socklen_t clntsocklen = sizeof(clntaddr);
 
 非常好https://blog.csdn.net/daaikuaichuan/article/details/83862311
 
-
+![image-20210317190102914](https://i.loli.net/2021/03/17/G9SBqrh8fbLHzZO.png)
 
 ## epoll_create
 
